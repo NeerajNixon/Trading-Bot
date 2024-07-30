@@ -8,7 +8,7 @@ import os
 import cv2
 import numpy as np
 
-def Write_to_file(Date, net_worth, filename='{}.txt'.format(datetime.now().strftime("%Y-%m-%d %H.%M.%S"))):
+def Write_to_file(Date, net_worth, filename='{}.txt'.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))):
     for i in net_worth: 
         Date += " {}".format(i)
     #print(Date)

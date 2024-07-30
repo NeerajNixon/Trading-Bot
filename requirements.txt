@@ -1,0 +1,7 @@
+numpy
+tensorflow
+opencv-python
+matplotlib
+tensorboardx
+pandas
+mplfinance
