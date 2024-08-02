@@ -8,11 +8,11 @@ import random
 from collections import deque
 from tensorboardX import SummaryWriter
 from tensorflow.keras.optimizers import Adam, RMSprop
-
 from model import Actor_Model, Critic_Model, Shared_Model
 from utils import TradingGraph, Write_to_file
 import matplotlib.pyplot as plt
 from datetime import datetime
+from indicators import AddIndicators
 
 class CustomAgent:
     # A custom Bitcoin trading agent
@@ -27,7 +27,8 @@ class CustomAgent:
         self.log_name = datetime.now().strftime("%Y_%m_%d_%H_%M")+"_Crypto_trader"
         
         # State size contains Market+Orders history for the last lookback_window_size steps
-        self.state_size = (lookback_window_size, 10)
+        #self.state_size = (lookback_window_size, 10)
+        self.state_size = (lookback_window_size, 10+9) # 10 standard information +9 indicators
 
         # Neural Networks part bellow
         self.lr = lr
@@ -131,7 +132,10 @@ class CustomAgent:
         if len(args) > 0:
             with open(f"{self.log_name}/log.txt", "a+") as log:
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                log.write(f"{current_time}, {args[0]}, {args[1]}, {args[2]}, {args[3]}, {args[4]}\n")
+                atgumets = ""
+                for arg in args:
+                    atgumets += f", {arg}"
+                log.write(f"{current_time}{atgumets}\n")
 
     def load(self, folder, name):
         # load keras model weights
@@ -141,7 +145,7 @@ class CustomAgent:
         
 class CustomEnv:
     # A custom Bitcoin trading environment
-    def __init__(self, df, initial_balance=1000, lookback_window_size=50, Render_range=100, Show_reward=False, normalize_value=40000):
+    def __init__(self, df, initial_balance=1000, lookback_window_size=50, Render_range=100, Show_reward=False, Show_indicators=False, normalize_value=40000):
         # Define action space and state size and other custom parameters
         self.df = df.dropna().reset_index()
         self.df_total_steps = len(self.df)-1
@@ -149,6 +153,7 @@ class CustomEnv:
         self.lookback_window_size = lookback_window_size
         self.Render_range = Render_range # render range in visualization
         self.Show_reward = Show_reward # show order reward in rendered visualization
+        self.Show_indicators = Show_indicators # show main indicators in rendered visualization
 
         # Orders history contains the balance, net_worth, crypto_bought, crypto_sold, crypto_held values for the last lookback_window_size steps
         self.orders_history = deque(maxlen=self.lookback_window_size)
@@ -156,11 +161,13 @@ class CustomEnv:
         # Market history contains the OHCL values for the last lookback_window_size prices
         self.market_history = deque(maxlen=self.lookback_window_size)
 
+        self.indicators_history = deque(maxlen=self.lookback_window_size)
+
         self.normalize_value = normalize_value
 
     # Reset the state of the environment to an initial state
     def reset(self, env_steps_size = 0):
-        self.visualization = TradingGraph(Render_range=self.Render_range, Show_reward=self.Show_reward) # init visualization
+        self.visualization = TradingGraph(Render_range=self.Render_range, Show_reward=self.Show_reward, Show_indicators=self.Show_indicators) # init visualization
         self.trades = deque(maxlen=self.Render_range) # limited orders memory for visualization
         
         self.balance = self.initial_balance
@@ -186,14 +193,30 @@ class CustomEnv:
         for i in reversed(range(self.lookback_window_size)):
             current_step = self.current_step - i
             self.orders_history.append([self.balance, self.net_worth, self.crypto_bought, self.crypto_sold, self.crypto_held])
+
             self.market_history.append([self.df.loc[current_step, 'Open'],
                                         self.df.loc[current_step, 'High'],
                                         self.df.loc[current_step, 'Low'],
                                         self.df.loc[current_step, 'Close'],
-                                        self.df.loc[current_step, 'Volume']
+                                        self.df.loc[current_step, 'Volume'],
                                         ])
 
-        state = np.concatenate((self.market_history, self.orders_history), axis=1)
+            self.indicators_history.append(
+                [self.df.loc[current_step, 'sma7'] / self.normalize_value,
+                                        self.df.loc[current_step, 'sma25'] / self.normalize_value,
+                                        self.df.loc[current_step, 'sma99'] / self.normalize_value,
+                                        self.df.loc[current_step, 'bb_bbm'] / self.normalize_value,
+                                        self.df.loc[current_step, 'bb_bbh'] / self.normalize_value,
+                                        self.df.loc[current_step, 'bb_bbl'] / self.normalize_value,
+                                        self.df.loc[current_step, 'psar'] / self.normalize_value,
+                                        self.df.loc[current_step, 'MACD'] / 400,
+                                        self.df.loc[current_step, 'RSI'] / 100
+                                        ])
+            
+
+        state = np.concatenate((self.market_history, self.orders_history), axis=1) / self.normalize_value
+        state = np.concatenate((state, self.indicators_history), axis=1)
+
         return state
 
     # Get the data points for the given current_step
@@ -202,9 +225,23 @@ class CustomEnv:
                                     self.df.loc[self.current_step, 'High'],
                                     self.df.loc[self.current_step, 'Low'],
                                     self.df.loc[self.current_step, 'Close'],
-                                    self.df.loc[self.current_step, 'Volume']
+                                    self.df.loc[self.current_step, 'Volume'],
                                     ])
-        obs = np.concatenate((self.market_history, self.orders_history), axis=1)
+
+        self.indicators_history.append([self.df.loc[self.current_step, 'sma7'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'sma25'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'sma99'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'bb_bbm'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'bb_bbh'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'bb_bbl'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'psar'] / self.normalize_value,
+                                    self.df.loc[self.current_step, 'MACD'] / 400,
+                                    self.df.loc[self.current_step, 'RSI'] / 100
+                                    ])
+        
+        obs = np.concatenate((self.market_history, self.orders_history), axis=1) / self.normalize_value
+        obs = np.concatenate((obs, self.indicators_history), axis=1)
+        
         return obs
 
     # Execute one time step within the environment
@@ -254,7 +291,7 @@ class CustomEnv:
         else:
             done = False
 
-        obs = self._next_observation() / self.normalize_value
+        obs = self._next_observation()
         
         return obs, reward, done
 
@@ -282,15 +319,9 @@ class CustomEnv:
     def render(self, visualize = False):
         #print(f'Step: {self.current_step}, Net Worth: {self.net_worth}')
         if visualize:
-            Date = self.df.loc[self.current_step, 'Date']
-            Open = self.df.loc[self.current_step, 'Open']
-            Close = self.df.loc[self.current_step, 'Close']
-            High = self.df.loc[self.current_step, 'High']
-            Low = self.df.loc[self.current_step, 'Low']
-            Volume = self.df.loc[self.current_step, 'Volume']
-
             # Render the environment to the screen
-            self.visualization.render(Date, Open, High, Low, Close, Volume, self.net_worth, self.trades)
+            img = self.visualization.render(self.df.loc[self.current_step], self.net_worth, self.trades)
+            return img
 
         
 def Random_games(env, visualize, test_episodes = 50, comment=""):
@@ -356,7 +387,7 @@ def train_agent(env, agent, visualize=False, train_episodes = 50, training_batch
             agent.save()
             
     agent.end_training_log()
-
+    
 def test_agent(env, agent, visualize=True, test_episodes=10, folder="", name="Crypto_trader", comment=""):
     agent.load(folder, name)
     average_net_worth = 0
@@ -388,25 +419,17 @@ def test_agent(env, agent, visualize=True, test_episodes=10, folder="", name="Cr
 if __name__ == "__main__":            
     df = pd.read_csv('./pricedata.csv')
     df = df.sort_values('Date')
+    df = AddIndicators(df) # insert indicators to df
 
     lookback_window_size = 50
     test_window = 720 # 30 days 
     train_df = df[:-test_window-lookback_window_size]
     test_df = df[-test_window-lookback_window_size:]
 
-    agent = CustomAgent(lookback_window_size=lookback_window_size, lr=0.00001, epochs=1, optimizer=Adam, batch_size = 32, model="Dense")
-    # train_env = CustomEnv(train_df, lookback_window_size=lookback_window_size)
-    # train_agent(train_env, agent, visualize=False, train_episodes=50000, training_batch_size=500)
-    test_env = CustomEnv(test_df, lookback_window_size=lookback_window_size, Show_reward=False)
-    test_agent(test_env, agent, visualize=False, test_episodes=1, folder="2024_08_01_13_32_Crypto_trader", name="1277.39_Crypto_trader", comment="")
+    agent = CustomAgent(lookback_window_size=lookback_window_size, lr=0.00001, epochs=5, optimizer=Adam, batch_size = 32, model="Dense")
+    #train_env = CustomEnv(train_df, lookback_window_size=lookback_window_size)
+    #train_agent(train_env, agent, visualize=False, train_episodes=50000, training_batch_size=500)
 
-    agent = CustomAgent(lookback_window_size=lookback_window_size, lr=0.00001, epochs=1, optimizer=Adam, batch_size = 32, model="CNN")
-    test_env = CustomEnv(test_df, lookback_window_size=lookback_window_size, Show_reward=False)
-    test_agent(test_env, agent, visualize=False, test_episodes=1, folder="2024_07_31_23_48_Crypto_trader", name="1772.66_Crypto_trader", comment="")
-    test_agent(test_env, agent, visualize=False, test_episodes=1, folder="2024_07_31_23_48_Crypto_trader", name="1377.86_Crypto_trader", comment="")
-
-    agent = CustomAgent(lookback_window_size=lookback_window_size, lr=0.00001, epochs=1, optimizer=Adam, batch_size = 128, model="LSTM")
-    test_env = CustomEnv(test_df, lookback_window_size=lookback_window_size, Show_reward=False)
-    test_agent(test_env, agent, visualize=False, test_episodes=1, folder="2024_07_31_23_43_Crypto_trader", name="1076.27_Crypto_trader", comment="")
-
+    test_env = CustomEnv(test_df, lookback_window_size=lookback_window_size, Show_reward=True, Show_indicators=True)
+    test_agent(test_env, agent, visualize=True, test_episodes=1, folder="2024_08_02_12_18_Crypto_trader", name="1933.71_Crypto_trader", comment="")
     

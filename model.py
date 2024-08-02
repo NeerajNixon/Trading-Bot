@@ -45,7 +45,7 @@ class Shared_Model:
 
         self.Actor = Model(inputs = X_input, outputs = output)
         self.Actor.compile(loss=self.ppo_loss, optimizer=optimizer(learning_rate=lr))
-        print(self.Actor.summary())
+        #print(self.Actor.summary())
 
     def ppo_loss(self, y_true, y_pred):
         # Defined in https://arxiv.org/abs/1707.06347
@@ -73,14 +73,13 @@ class Shared_Model:
 
         return total_loss
 
-    #@tf.function
     def actor_predict(self, state):
         return self.Actor.predict(state)
 
     def critic_PPO2_loss(self, y_true, y_pred):
         value_loss = K.mean((y_true - y_pred) ** 2) # standard PPO loss
         return value_loss
-    #@tf.function
+
     def critic_predict(self, state):
         return self.Critic.predict([state, np.zeros((state.shape[0], 1))])
 
@@ -126,7 +125,6 @@ class Actor_Model:
 
         return total_loss
 
-    @tf.function
     def actor_predict(self, state):
         return self.Actor.predict(state)
 
@@ -147,6 +145,5 @@ class Critic_Model:
         value_loss = K.mean((y_true - y_pred) ** 2) # standard PPO loss
         return value_loss
 
-    @tf.function
     def critic_predict(self, state):
         return self.Critic.predict([state, np.zeros((state.shape[0], 1))])
